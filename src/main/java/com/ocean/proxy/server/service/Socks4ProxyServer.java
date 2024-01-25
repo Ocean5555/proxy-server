@@ -1,6 +1,5 @@
 package com.ocean.proxy.server.service;
 
-import com.ocean.proxy.server.ProxyServerApplication;
 import com.ocean.proxy.server.util.BytesUtil;
 import com.ocean.proxy.server.util.IpUtil;
 
@@ -15,7 +14,7 @@ import java.nio.charset.StandardCharsets;
  */
 public class Socks4ProxyServer {
 
-    public void handleClient(Socket clientSocket) {
+    public static void handleClient(Socket clientSocket) {
         try {
             InputStream clientInput = clientSocket.getInputStream();
             OutputStream clientOutput = clientSocket.getOutputStream();
@@ -37,11 +36,9 @@ public class Socks4ProxyServer {
             byte[] dstIp = new byte[4];   //长度4字节，访问目标IP
             clientInput.read(dstIp);
             String targetAddress = IpUtil.bytesToIpAddress(dstIp);
-            ;
             System.out.println("ip:" + targetAddress);
             byte[] data = new byte[1024];
             int len = clientInput.read(data);
-            System.out.println("====================================");
             Socket targetSocket;
             try {
                 if (targetAddress.equals("0.0.0.1")) {
@@ -52,23 +49,19 @@ public class Socks4ProxyServer {
                 } else {
                     targetSocket = new Socket(targetAddress, targetPort);
                 }
+                DataTransHandler.bindClientAndTarget(clientSocket, targetSocket);
+                // 返回的响应信息  | VN | CD | DSTPORT | DSTIP |
+                // VN：长度1字节，响应操作符，固定为0。
+                // CD：长度1字节，响应码.
+                // 90: request granted
+                // 91: request rejected or failed
+                // 92: request rejected because SOCKS server cannot connect to identity on the client
+                // 93: request rejected because the client program and identity report different user-ids
                 clientOutput.write(new byte[]{(byte) 0x00, (byte) 0x5A, dstPort[1], dstPort[0], dstIp[3], dstIp[2], dstIp[1], dstIp[0]});
             } catch (Exception e) {
                 e.printStackTrace();
                 clientOutput.write(new byte[]{(byte) 0x00, (byte) 0x5B});
-                throw new RuntimeException(e);
             }
-            // 返回的响应信息  | VN | CD | DSTPORT | DSTIP |
-            // VN：长度1字节，响应操作符，固定为0。
-            // CD：长度1字节，响应码.
-            // 90: request granted
-            // 91: request rejected or failed
-            // 92: request rejected because SOCKS server cannot connect to identity on the client
-            // 93: request rejected because the client program and identity report different user-ids
-            // 然后，启动两个线程，分别从客户端读取数据并发送到目标服务器，以及从目标服务器读取数据并发送到客户端
-
-            ClientHandler.createClientThread(clientSocket, targetSocket);
-            TargetServerHandler.createTargetServerThread(clientSocket, targetSocket);
         } catch (Exception e) {
             e.printStackTrace();
             try {

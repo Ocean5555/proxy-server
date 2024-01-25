@@ -1,6 +1,5 @@
 package com.ocean.proxy.server.service;
 
-import com.ocean.proxy.server.ProxyServerApplication;
 import com.ocean.proxy.server.util.BytesUtil;
 import com.ocean.proxy.server.util.IpUtil;
 
@@ -8,31 +7,28 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.nio.ByteBuffer;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * socket5 协议的服务实现
  */
 public class Socks5ProxyServer {
 
-    public void handleClient(Socket clientSocket) {
+    public static void handleClient(Socket clientSocket) {
         try {
             InputStream clientInput = clientSocket.getInputStream();
             OutputStream clientOutput = clientSocket.getOutputStream();
             // 实现 SOCKS 握手协商和建立连接的逻辑
-            if (!handleHandshake(clientInput, clientOutput)) {
-                System.out.println("auth fail!");
-                return;
-            }
+            int methodsCount = clientInput.read();    //指示其后的 METHOD 字段所占的字节数
+            byte[] methods = new byte[methodsCount];   //methods表示客户端使用的认知方式，0x00表示不认证，0x03表示用户名密码认证
+            clientInput.read(methods);
+            String s = BytesUtil.toHexString(methods);
+            System.out.println("client auth type: 0x" + s);
+            // 无需认证的方法，即0x00
+            clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x00});
+
             // 这部分逻辑需要根据 SOCKS5 协议规范实现
-            Socket targetSocket = handleConnectionRequest(clientSocket, clientInput, clientOutput);
-
-            // 然后，启动两个线程，分别从客户端读取数据并发送到目标服务器，以及从目标服务器读取数据并发送到客户端
-            ClientHandler.createClientThread(clientSocket, targetSocket);
-            TargetServerHandler.createTargetServerThread(clientSocket, targetSocket);
-
+            Socket targetSocket = handleConnectionRequest(clientSocket);
+            DataTransHandler.bindClientAndTarget(clientSocket, targetSocket);
         } catch (Exception e) {
             e.printStackTrace();
             try {
@@ -43,79 +39,63 @@ public class Socks5ProxyServer {
         }
     }
 
-    /**
-     * 握手请求
-     *
-     * @param input
-     * @param output
-     * @return
-     * @throws IOException
-     */
-    private boolean handleHandshake(InputStream input, OutputStream output) throws IOException {
-        int methodsCount = input.read();    //指示其后的 METHOD 字段所占的字节数
-        byte[] methods = new byte[methodsCount];   //methods表示客户端使用的认知方式，0x00表示不认证，0x03表示用户名密码认证
-        input.read(methods);
-        String s = BytesUtil.toHexString(methods);
-        System.out.println("client auth type: 0x" + s);
-        // 这里假设支持无需认证的方法，即0x00
-        output.write(new byte[]{(byte) 0x05, (byte) 0x00});
-        return true;
-    }
 
     /**
      * 建立连接，客户端->代理服务器，代理服务器->目标服务
      * 客户端向代理服务器发起正式请求以指示所要访问的目标进程的地址, 端口
      *
      * @param clientSocket
-     * @param input
-     * @param output
      * @throws IOException
      */
-    private Socket handleConnectionRequest(Socket clientSocket, InputStream input, OutputStream output) throws IOException {
-        int version = input.read(); //版本，socks5的值是0x05
-        int cmd = input.read(); //共有 3 个取值, 分别为 0x01 (CONNECT), 0x02 (BIND), 0x03 (UDP ASSOCIATE)
-        int rsv = input.read(); // 固定为 0x00
-        int addressType = input.read();
+    private static Socket handleConnectionRequest(Socket clientSocket) throws IOException {
+        InputStream clientInput = clientSocket.getInputStream();
+        OutputStream clientOutput = clientSocket.getOutputStream();
+        int version = clientInput.read(); //版本，socks5的值是0x05
+        int cmd = clientInput.read(); //共有 3 个取值, 分别为 0x01 (CONNECT), 0x02 (BIND), 0x03 (UDP ASSOCIATE)
+        int rsv = clientInput.read(); // 固定为 0x00
+        int addressType = clientInput.read();
         Socket targetSocket;
         // 目标地址类型，IPv4地址为0x01，IPv6地址为0x04，域名地址为0x03
         if (addressType == 0x01) {
             byte[] ipv4 = new byte[4];
-            input.read(ipv4);
+            clientInput.read(ipv4);
             String targetAddress = IpUtil.bytesToIpAddress(ipv4);
-            int targetPort = input.read() << 8 | input.read();
+            int targetPort = clientInput.read() << 8 | clientInput.read();
+            System.out.println("target:" + targetAddress + ":" + targetPort);
             try {
                 targetSocket = new Socket(targetAddress, targetPort);
                 if (cmd == 0x01) {
-                    sendConnectionResponse(output, (byte) 0x00, ipv4, targetPort);
+                    sendConnectionResponse(clientOutput, (byte) 0x00, ipv4, targetPort);
                 } else if (cmd == 0x03) {
-                    handleUdpAssociateRequest(output);
+                    handleUdpAssociateRequest(clientOutput);
                 } else {
                     System.out.println("not support cmd!");
                 }
             } catch (IOException e) {
-                sendConnectionResponse(output, (byte) 0x01, ipv4, targetPort);
+                sendConnectionResponse(clientOutput, (byte) 0x01, ipv4, targetPort);
                 throw new RuntimeException("连接目标服务失败。", e);
             }
         } else if (addressType == 0x03) {
             // 域名地址
-            int domainLength = input.read();
+            int domainLength = clientInput.read();
             byte[] domainBytes = new byte[domainLength];
-            input.read(domainBytes);
+            clientInput.read(domainBytes);
             String targetDomain = new String(domainBytes);
-            int targetPort = input.read() << 8 | input.read();
+            int targetPort = clientInput.read() << 8 | clientInput.read();
+            System.out.println("target:" + targetDomain + ":" + targetPort);
             // 在实际应用中，可以根据 targetDomain 和 targetPort 与目标服务器建立连接
             try {
                 targetSocket = new Socket(targetDomain, targetPort);
                 if (cmd == 0x01) {
                     // 发送连接成功的响应
-                    sendConnectionResponse(output, (byte) 0x00, targetDomain, targetPort);
+                    sendConnectionResponse(clientOutput, (byte) 0x00, targetDomain, targetPort);
                 } else if (cmd == 0x03) {
-                    handleUdpAssociateRequest(output);
+                    handleUdpAssociateRequest(clientOutput);
                 } else {
                     System.out.println("not support cmd!");
                 }
             } catch (IOException e) {
-                sendConnectionResponse(output, (byte) 0x01, targetDomain, targetPort);
+                sendConnectionResponse(clientOutput, (byte) 0x01, targetDomain, targetPort);
                 throw new RuntimeException("连接目标服务失败。", e);
             }
         } else {
@@ -125,7 +105,7 @@ public class Socks5ProxyServer {
         return targetSocket;
     }
 
-    private void handleUdpAssociateRequest(OutputStream output) throws IOException {
+    private static void handleUdpAssociateRequest(OutputStream output) throws IOException {
         // 假设监听 UDP 请求的端口为 5000
         int udpPort = 5000;
         output.write(new byte[]{(byte) 0x05, (byte) 0x00, (byte) 0x00, (byte) 0x03, (byte) 127, (byte) 0, (byte) 0, (byte) 1, (byte) (udpPort >> 8), (byte) udpPort});
@@ -153,12 +133,12 @@ public class Socks5ProxyServer {
      * @param targetPort
      * @return
      */
-    private void sendConnectionResponse(OutputStream output, byte status, byte[] ipv4, int targetPort) throws IOException {
+    private static void sendConnectionResponse(OutputStream output, byte status, byte[] ipv4, int targetPort) throws IOException {
         // 发送连接响应
         output.write(new byte[]{(byte) 0x05, status, (byte) 0x00, (byte) 0x01, ipv4[0], ipv4[1], ipv4[2], ipv4[3], (byte) (targetPort >> 8), (byte) targetPort});
     }
 
-    private void sendConnectionResponse(OutputStream output, byte status, String targetDomain, int targetPort) throws IOException {
+    private static void sendConnectionResponse(OutputStream output, byte status, String targetDomain, int targetPort) throws IOException {
         // 发送连接响应
         byte[] domainBytes = targetDomain.getBytes();
         int domainLength = domainBytes.length;
