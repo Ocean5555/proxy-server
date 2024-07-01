@@ -1,6 +1,7 @@
 package com.ocean.proxy.server;
 
 
+import com.ocean.proxy.server.service.ForwardService;
 import com.ocean.proxy.server.service.Socks4ProxyServer;
 import com.ocean.proxy.server.service.Socks5ProxyServer;
 
@@ -20,13 +21,14 @@ public class ProxyServerApplication {
         if (args != null && args.length > 0) {
             port = args[0];
         } else {
-            Properties systemProperties = System.getProperties();
-            port = systemProperties.getProperty("proxy.port");
+            Properties properties = System.getProperties();
+            port = properties.getProperty("proxy.port");
             if (port == null) {
                 InputStream resourceAsStream = ProxyServerApplication.class.getClassLoader().getResourceAsStream("application.properties");
-                Properties properties = new Properties();
+                properties = new Properties();
                 properties.load(resourceAsStream);
                 port = properties.getProperty("proxy.port");
+                ForwardService.startForwardServer(properties);
             }
         }
 
