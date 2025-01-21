@@ -13,22 +13,43 @@ import java.net.Socket;
  */
 public class Socks5ProxyServer {
 
-    public static void handleClient(Socket clientSocket) {
+    public static void handleClient(Socket clientSocket, boolean auth) {
         try {
             InputStream clientInput = clientSocket.getInputStream();
             OutputStream clientOutput = clientSocket.getOutputStream();
             // 实现 SOCKS 握手协商和建立连接的逻辑
             int methodsCount = clientInput.read();    //指示其后的 METHOD 字段所占的字节数
-            byte[] methods = new byte[methodsCount];   //methods表示客户端使用的认知方式，0x00表示不认证，0x03表示用户名密码认证
+            byte[] methods = new byte[methodsCount];   //methods表示客户端使用的认知方式，0x00表示不认证，0x00：无认证。 0x01：GSSAPI认证（较少使用）。0x02：用户名/密码认证。
             clientInput.read(methods);
             String s = BytesUtil.toHexString(methods);
             System.out.println("client auth type: 0x" + s);
-            // 无需认证的方法，即0x00
-            clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x00});
+            if(!auth){
+                // 无需认证的方法，即0x00
+                clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x00});
+            }else{
+                //用户名密码认证：0x02
+                clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x02});
+                int VER = clientInput.read();
+                int ULEN = clientInput.read();
+                byte[] usernameBytes = new byte[ULEN];
+                clientInput.read(usernameBytes);
+                int PLEN = clientInput.read();
+                byte[] passwdBytes = new byte[PLEN];
+                clientInput.read(passwdBytes);
+                String username = new String(usernameBytes);
+                String passwd = new String(passwdBytes);
+                System.out.println("收到用户名和密码：" + username + " " + passwd);
+                if (!AuthService.checkAuth(username, passwd)) {
+                    System.out.println("认证失败");
+                    clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x01});
+                    return;
+                }else{
+                    System.out.println("认证成功");
+                    clientOutput.write(new byte[]{(byte) 0x05, (byte) 0x00});
+                }
+            }
 
-            // 这部分逻辑需要根据 SOCKS5 协议规范实现
-            Socket targetSocket = handleConnectionRequest(clientSocket);
-            DataTransHandler.bindClientAndTarget(clientSocket, targetSocket);
+            createDataInteraction(clientSocket);
         } catch (Exception e) {
             e.printStackTrace();
             try {
@@ -39,6 +60,11 @@ public class Socks5ProxyServer {
         }
     }
 
+    private static void createDataInteraction(Socket clientSocket)throws Exception{
+        // 这部分逻辑需要根据 SOCKS5 协议规范实现
+        Socket targetSocket = handleConnectionRequest(clientSocket);
+        DataTransHandler.bindClientAndTarget(clientSocket, targetSocket);
+    }
 
     /**
      * 建立连接，客户端->代理服务器，代理服务器->目标服务
