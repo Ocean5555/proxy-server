@@ -6,10 +6,12 @@ import com.ocean.proxy.server.service.ForwardService;
 import com.ocean.proxy.server.service.Socks4ProxyServer;
 import com.ocean.proxy.server.service.Socks5ProxyServer;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class ProxyServerApplication {
@@ -39,7 +41,7 @@ public class ProxyServerApplication {
 
         try (ServerSocket serverSocket = new ServerSocket(Integer.parseInt(port))) {
             System.out.println("Proxy Server is running on port " + port + ". support socks4 and socks5");
-
+            ExecutorService executorService = Executors.newCachedThreadPool();
             while (true) {
                 // 等待客户端连接
                 Socket clientSocket = serverSocket.accept();
@@ -48,7 +50,7 @@ public class ProxyServerApplication {
                 System.out.println("Accepted connection from " + clientInfo);
                 final boolean auth = authEnable;
                 // 开启一个线程处理客户端连接
-                Executors.newSingleThreadScheduledExecutor().execute(() -> {
+                executorService.execute(() -> {
                     try {
                         InputStream clientInput = clientSocket.getInputStream();
                         int version = clientInput.read(); //版本， socks5的值是0x05, socks4的值是0x04
