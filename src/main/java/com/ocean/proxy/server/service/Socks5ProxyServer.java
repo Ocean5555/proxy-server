@@ -109,11 +109,9 @@ public class Socks5ProxyServer {
             String targetDomain = new String(domainBytes);
             int targetPort = clientInput.read() << 8 | clientInput.read();
             System.out.println("target:" + targetDomain + ":" + targetPort);
-            // 在实际应用中，可以根据 targetDomain 和 targetPort 与目标服务器建立连接
             try {
                 targetSocket = new Socket(targetDomain, targetPort);
                 if (cmd == 0x01) {
-                    // 发送连接成功的响应
                     sendConnectionResponse(clientOutput, (byte) 0x00, targetDomain, targetPort);
                 } else if (cmd == 0x03) {
                     handleUdpAssociateRequest(clientOutput);
@@ -124,11 +122,50 @@ public class Socks5ProxyServer {
                 sendConnectionResponse(clientOutput, (byte) 0x01, targetDomain, targetPort);
                 throw new RuntimeException("连接目标服务失败。", e);
             }
+        } else if (addressType == 0x04) {
+            // IPv6地址
+            byte[] ipv6 = new byte[16];
+            clientInput.read(ipv6);
+            String targetAddress = ipv6BytesToString(ipv6);
+            int targetPort = clientInput.read() << 8 | clientInput.read();
+            System.out.println("target(IPv6):" + targetAddress + ":" + targetPort);
+            try {
+                targetSocket = new Socket(targetAddress, targetPort);
+                if (cmd == 0x01) {
+                    sendConnectionResponseIPv6(clientOutput, (byte) 0x00, ipv6, targetPort);
+                } else if (cmd == 0x03) {
+                    handleUdpAssociateRequest(clientOutput);
+                } else {
+                    System.out.println("not support cmd!");
+                }
+            } catch (IOException e) {
+                sendConnectionResponseIPv6(clientOutput, (byte) 0x01, ipv6, targetPort);
+                throw new RuntimeException("连接目标服务失败。", e);
+            }
         } else {
             // 不支持的地址类型
             throw new RuntimeException("not support address type!");
         }
         return targetSocket;
+    }
+
+    // 新增：IPv6字节数组转字符串
+    private static String ipv6BytesToString(byte[] bytes) {
+        if (bytes.length != 16) return null;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 16; i += 2) {
+            sb.append(String.format("%02x%02x", bytes[i], bytes[i + 1]));
+            if (i < 14) sb.append(":");
+        }
+        return sb.toString().replaceAll("(:0{1,3}){2,}", "::"); // 简单压缩
+    }
+
+    // 新增：发送IPv6响应
+    private static void sendConnectionResponseIPv6(OutputStream output, byte status, byte[] ipv6, int targetPort) throws IOException {
+        // 发送连接响应
+        output.write(new byte[]{(byte) 0x05, status, (byte) 0x00, (byte) 0x04});
+        output.write(ipv6);
+        output.write(new byte[]{(byte) (targetPort >> 8), (byte) targetPort});
     }
 
     private static void handleUdpAssociateRequest(OutputStream output) throws IOException {

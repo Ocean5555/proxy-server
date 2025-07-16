@@ -1,6 +1,7 @@
 package com.ocean.proxy.server.service;
 
 import com.ocean.proxy.server.util.BytesUtil;
+import com.ocean.proxy.server.ProxyServerApplication;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -8,8 +9,7 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -20,7 +20,8 @@ import java.util.concurrent.locks.LockSupport;
  */
 public class DataTransHandler {
 
-    private static final ExecutorService executorService = Executors.newCachedThreadPool();
+    // 使用全局线程池
+    private static final ThreadPoolExecutor executorService = ProxyServerApplication.GLOBAL_EXECUTOR;
 
     /**
      * 绑定客户端与目标的数据传输
@@ -36,6 +37,14 @@ public class DataTransHandler {
         createClientThread(clientSocket, targetSocket, sessionId);
         createTargetThread(clientSocket, targetSocket, sessionId);
         checkConnectStatus(clientSocket, targetSocket, sessionId);
+    }
+
+    /**
+     * 安全关闭两个Socket
+     */
+    private static void closeBoth(Socket s1, Socket s2) {
+        try { if (s1 != null && !s1.isClosed()) s1.close(); } catch (IOException ignored) {}
+        try { if (s2 != null && !s2.isClosed()) s2.close(); } catch (IOException ignored) {}
     }
 
     public static void createClientThread(Socket clientSocket, Socket targetSocket, String sessionId) throws IOException {
@@ -62,6 +71,8 @@ public class DataTransHandler {
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                closeBoth(clientSocket, targetSocket);
             }
         });
     }
@@ -100,6 +111,8 @@ public class DataTransHandler {
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                closeBoth(clientSocket, targetSocket);
             }
         });
     }
@@ -125,28 +138,14 @@ public class DataTransHandler {
                     clientSocket.sendUrgentData(0xFF);
                 } catch (IOException e) {
                     System.out.println("-------------------------------- client close :" + sessionId);
-                    try {
-                        clientSocket.close();
-                    } catch (IOException ex) {
-                    }
-                    try {
-                        targetSocket.close();
-                    } catch (IOException ex) {
-                    }
+                    closeBoth(clientSocket, targetSocket);
                     return;
                 }
                 try {
                     targetSocket.sendUrgentData(0xFF);
                 } catch (IOException e) {
                     System.out.println("================================= target close :" + sessionId);
-                    try {
-                        targetSocket.close();
-                    } catch (IOException ex) {
-                    }
-                    try {
-                        clientSocket.close();
-                    } catch (IOException ex) {
-                    }
+                    closeBoth(clientSocket, targetSocket);
                     return;
                 }
             }
