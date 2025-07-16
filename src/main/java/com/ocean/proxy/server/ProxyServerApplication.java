@@ -10,16 +10,14 @@ import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Properties;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class ProxyServerApplication {
 
-    // 全局线程池，最大200线程，队列1000，超时60秒
+    // 全局线程池，最大2000线程，队列100，超时20秒
     public static final ThreadPoolExecutor GLOBAL_EXECUTOR = new ThreadPoolExecutor(
-            10, 200, 60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(1000),
+            300, 2000, 20L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(100),
             new ThreadPoolExecutor.AbortPolicy()
     );
 
